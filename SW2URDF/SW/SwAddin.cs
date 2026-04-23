@@ -42,8 +42,8 @@ namespace SW2URDF.SW
     /// </summary>
     [Guid("65c9fc17-6a74-45a3-8f84-55185900275d"), ComVisible(true)]
     [SwAddin(
-        Description = "SolidWorks to URDF exporter",
-        Title = "SW2URDF",
+        Description = "SolidWorks to URDF exporter (custom build)",
+        Title = "SW2URDF (custom build)",
         LoadAtStartup = true
         )]
     public class SwAddin : ISwAddin
