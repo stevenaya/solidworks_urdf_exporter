@@ -368,12 +368,12 @@ namespace SW2URDF.URDFExport
                 }
             }
 
-            if (ComputeInertialValues && node.Link.SWComponents.Count > 0)
+            if (ComputeInertialValues && !node.Link.isFixedFrame && node.Link.SWComponents.Count > 0)
             {
                 ComputeInertialProperties(node.Link);
             }
 
-            if (ComputeVisualCollision)
+            if (ComputeVisualCollision && !node.Link.isFixedFrame)
             {
                 ComputeVisualCollisionProperties(node.Link);
             }
@@ -1462,6 +1462,7 @@ namespace SW2URDF.URDFExport
     public enum MeshExportFormat
     {
         STL,
-        THREEDXML
+        THREEDXML,
+        DAE
     }
 }

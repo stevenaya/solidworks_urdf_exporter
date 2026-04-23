@@ -30,7 +30,9 @@ using SW2URDF.Utilities;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Windows;
 using System.Xml.Serialization;
 
@@ -157,6 +159,10 @@ namespace SW2URDF.URDFExport
             package.CreateDirectories();
             URDFRobot.Name = PackageName;
             string windowsURDFFileName = package.WindowsRobotsDirectory + URDFRobot.Name + ".urdf";
+            bool convert3dxmlToDae = exportSTL && meshFormat == MeshExportFormat.DAE;
+            string windowsIntermediateURDFFileName = convert3dxmlToDae
+                ? package.WindowsRobotsDirectory + URDFRobot.Name + "_3dxml_intermediate.urdf"
+                : windowsURDFFileName;
             string windowsCSVFileName = package.WindowsRobotsDirectory + URDFRobot.Name + ".csv";
             string windowsPackageXMLFileName = package.WindowsPackageDirectory + "package.xml";
 
@@ -227,9 +233,16 @@ namespace SW2URDF.URDFExport
                 return;
             }
 
-            logger.Info("Writing URDF file to " + windowsURDFFileName);
-            URDFWriter uWriter = new URDFWriter(windowsURDFFileName);
+            logger.Info("Writing URDF file to " + windowsIntermediateURDFFileName);
+            URDFWriter uWriter = new URDFWriter(windowsIntermediateURDFFileName);
             URDFRobot.WriteURDF(uWriter.writer);
+
+            if (convert3dxmlToDae)
+            {
+                Convert3dxmlUrdfMeshesWithScikitRobot(
+                    windowsIntermediateURDFFileName,
+                    windowsURDFFileName);
+            }
 
             ImportExport.WriteRobotToCSV(URDFRobot, windowsCSVFileName);
 
@@ -315,6 +328,7 @@ namespace SW2URDF.URDFExport
                     break;
 
                 case MeshExportFormat.THREEDXML:
+                case MeshExportFormat.DAE:
                     meshFilename += ".3dxml";
                     windowsMeshFileName += ".3dxml";
                     break;
@@ -334,6 +348,7 @@ namespace SW2URDF.URDFExport
                         break;
 
                     case MeshExportFormat.THREEDXML:
+                    case MeshExportFormat.DAE:
                         Save3dxml(link, windowsMeshFileName);
                         break;
 
@@ -346,16 +361,98 @@ namespace SW2URDF.URDFExport
             link.Collision.Geometry.Mesh.Filename = meshFilename;
         }
 
+        private static void Convert3dxmlUrdfMeshesWithScikitRobot(
+            string windowsInputURDFFileName,
+            string windowsOutputURDFFileName)
+        {
+            logger.Info("Converting 3dxml meshes to DAE with scikit-robot");
+
+            ProcessStartInfo startInfo = new ProcessStartInfo
+            {
+                FileName = GetPythonExecutable(),
+                Arguments = "-m skrobot.apps.convert_urdf_mesh " +
+                    QuoteProcessArgument(windowsInputURDFFileName) +
+                    " --output " + QuoteProcessArgument(windowsOutputURDFFileName) +
+                    " --format dae --collision-mesh-format stl --force-zero-origin --overwrite-mesh",
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+                UseShellExecute = false
+            };
+
+            try
+            {
+                using (Process process = new Process())
+                {
+                    process.StartInfo = startInfo;
+                    StringBuilder output = new StringBuilder();
+                    StringBuilder error = new StringBuilder();
+
+                    process.OutputDataReceived += (sender, args) =>
+                    {
+                        if (args.Data != null)
+                        {
+                            output.AppendLine(args.Data);
+                        }
+                    };
+                    process.ErrorDataReceived += (sender, args) =>
+                    {
+                        if (args.Data != null)
+                        {
+                            error.AppendLine(args.Data);
+                        }
+                    };
+                    process.Start();
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
+                    process.WaitForExit();
+                    process.WaitForExit();
+
+                    if (output.Length > 0)
+                    {
+                        logger.Info("scikit-robot output: " + output);
+                    }
+                    if (error.Length > 0)
+                    {
+                        logger.Warn("scikit-robot error output: " + error);
+                    }
+
+                    if (process.ExitCode != 0)
+                    {
+                        throw new Exception("scikit-robot convert-urdf-mesh failed with exit code " +
+                            process.ExitCode + ". See export.log for details.");
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                logger.Error("Failed to convert 3dxml meshes with scikit-robot", e);
+                throw new Exception("Failed to convert 3dxml meshes with scikit-robot. " +
+                    "Install Python and scikit-robot, or choose STL/3dxml export. " +
+                    "See docs/SCIKIT_ROBOT_MESH_EXPORT.md and export.log for details.", e);
+            }
+        }
+
+        private static string GetPythonExecutable()
+        {
+            string configuredPython = System.Environment.GetEnvironmentVariable("SW2URDF_PYTHON");
+            if (!String.IsNullOrWhiteSpace(configuredPython))
+            {
+                return configuredPython;
+            }
+            return "python";
+        }
+
+        private static string QuoteProcessArgument(string value)
+        {
+            return "\"" + value.Replace("\"", "\\\"") + "\"";
+        }
+
         private void Save3dxml(Link link, string windowsMeshFilename)
         {
             double[] inertialOriginXYZ = link.Inertial.Origin.GetXYZ();
             double[] inertialOriginRPY = link.Inertial.Origin.GetRPY();
             double[] inertialMoment = link.Inertial.Inertia.GetMoment();
-            double[] visualOriginXYZ = link.Visual.Origin.GetXYZ();
-            double[] visualOriginRPY = link.Visual.Origin.GetRPY();
-            double[] collisionOriginXYZ = link.Collision.Origin.GetXYZ();
-            double[] collisionOriginRPY = link.Collision.Origin.GetRPY();
-
             int errors = 0;
             int warnings = 0;
 
@@ -439,7 +536,9 @@ namespace SW2URDF.URDFExport
             }
             finally
             {
-                // Keep 3DXML mesh localization from leaking into the URDF values written later.
+                // 3DXML meshes are exported in assembly coordinates, so keep the localized
+                // visual/collision origins as compensation. Only inertial values are restored
+                // because they should stay in the link frame used by the URDF dynamics.
                 link.Inertial.Origin.SetXYZ(inertialOriginXYZ);
                 link.Inertial.Origin.SetRPY(inertialOriginRPY);
                 link.Inertial.Inertia.Ixx = inertialMoment[0];
@@ -448,10 +547,6 @@ namespace SW2URDF.URDFExport
                 link.Inertial.Inertia.Iyy = inertialMoment[4];
                 link.Inertial.Inertia.Iyz = inertialMoment[5];
                 link.Inertial.Inertia.Izz = inertialMoment[8];
-                link.Visual.Origin.SetXYZ(visualOriginXYZ);
-                link.Visual.Origin.SetRPY(visualOriginRPY);
-                link.Collision.Origin.SetXYZ(collisionOriginXYZ);
-                link.Collision.Origin.SetRPY(collisionOriginRPY);
             }
 
             if (errors + warnings != 0)

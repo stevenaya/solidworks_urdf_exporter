@@ -25,5 +25,10 @@ namespace SW2URDF.URDF
             ChildElements.Add(Geometry);
             ChildElements.Add(Material);
         }
+
+        public override bool ElementContainsData()
+        {
+            return Geometry != null && Geometry.ElementContainsData();
+        }
     }
 }

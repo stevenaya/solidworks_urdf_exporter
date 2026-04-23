@@ -25,5 +25,10 @@ namespace SW2URDF.URDF
             ChildElements.Add(Mass);
             ChildElements.Add(Inertia);
         }
+
+        public override bool ElementContainsData()
+        {
+            return Mass != null && Mass.Value > 0.0;
+        }
     }
 }
