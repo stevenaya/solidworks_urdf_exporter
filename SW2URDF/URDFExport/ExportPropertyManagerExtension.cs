@@ -194,27 +194,26 @@ namespace SW2URDF.URDFExport
 
         private void CheckNodeInertialComplete(LinkNode node)
         {
-            if (node.Nodes.Count > 0 && node.Link.SWComponents.Count == 0)
-            {
-                node.IsIncomplete = true;
-                node.WhyIncomplete +=
-                    "        Links with children cannot be empty. Select its associated components\r\n";
-            }
+            // Allow component-less links.
+            // These are virtual/interface links and intentionally have no inertial.
         }
 
         private void CheckNodeVisualComplete(LinkNode node)
         {
-            if (node.Nodes.Count > 0 && node.Link.SWComponents.Count == 0)
-            {
-                node.IsIncomplete = true;
-                node.WhyIncomplete +=
-                    "        Links with children cannot be empty. Select its associated components\r\n";
-            }
+            // Allow component-less links.
+            // These are virtual/interface links and intentionally have no visual/collision mesh.
         }
 
         private void CheckNodeJointComplete(LinkNode node)
         {
-            if (node.Link.SWComponents.Count == 0 && node.Link.Joint.CoordinateSystemName == "Automatically Generate")
+            bool emptyLink = node.Link.SWComponents.Count == 0;
+            bool autoCoord = node.Link.Joint.CoordinateSystemName == "Automatically Generate";
+            bool autoAxis = node.Link.Joint.AxisName == "Automatically Generate";
+            bool autoType =
+                node.Link.Joint.Type == "Automatically Detect" ||
+                node.Link.Joint.Type == "Automatically Generate";
+
+            if (emptyLink && autoCoord)
             {
                 node.IsIncomplete = true;
                 node.WhyIncomplete +=
@@ -222,7 +221,7 @@ namespace SW2URDF.URDFExport
                     "        without components. Either select an origin or at least one component.\r\n";
             }
 
-            if (node.Link.SWComponents.Count == 0 && node.Link.Joint.AxisName == "Automatically Generate")
+            if (!node.Link.isFixedFrame && emptyLink && autoAxis)
             {
                 node.IsIncomplete = true;
                 node.WhyIncomplete +=
@@ -230,7 +229,7 @@ namespace SW2URDF.URDFExport
                     "        without components. Either select an axis or at least one component.";
             }
 
-            if (node.Link.SWComponents.Count == 0 && node.Link.Joint.Type == "Automatically Generate")
+            if (!node.Link.isFixedFrame && emptyLink && autoType)
             {
                 node.IsIncomplete = true;
                 node.WhyIncomplete +=

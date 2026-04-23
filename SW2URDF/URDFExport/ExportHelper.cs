@@ -274,14 +274,22 @@ namespace SW2URDF.URDFExport
             foreach (Link child in link.Children)
             {
                 count += 1;
-                if (!child.isFixedFrame)
-                {
-                    ExportFiles(child, package, count, exportSTL, meshFormat);
-                }
+                ExportFiles(child, package, count, exportSTL, meshFormat);
+            }
+
+            bool hasMesh =
+                !link.isFixedFrame &&
+                link.SWComponents != null &&
+                link.SWComponents.Count > 0;
+
+            if (!hasMesh)
+            {
+                logger.Info("Skipping mesh export for empty/fixed-frame link: " + link.Name);
+                return;
             }
 
             // Copy the texture file (if it was specified) to the textures directory
-            if (!link.isFixedFrame && !String.IsNullOrWhiteSpace(link.Visual.Material.Texture.wFilename))
+            if (!String.IsNullOrWhiteSpace(link.Visual.Material.Texture.wFilename))
             {
                 if (File.Exists(link.Visual.Material.Texture.wFilename))
                 {

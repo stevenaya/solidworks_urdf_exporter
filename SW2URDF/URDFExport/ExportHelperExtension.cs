@@ -297,9 +297,19 @@ namespace SW2URDF.URDFExport
 
         private void ComputeInertialProperties(Link link)
         {
+            if (link.SWComponents == null || link.SWComponents.Count == 0)
+            {
+                return;
+            }
+
             // Get the SolidWorks MathTransform that corresponds to the child coordinate system
             MathTransform jointTransform = GetCoordinateSystemTransform(link.Joint.CoordinateSystemName);
             List<Body2> bodies = GetBodies(link.SWComponents);
+
+            if (bodies == null || bodies.Count == 0)
+            {
+                return;
+            }
 
             double[] moment = GetComponentsMomentOfInertia(bodies, jointTransform);
             link.Inertial.Inertia.SetMomentMatrix(moment);
@@ -341,6 +351,10 @@ namespace SW2URDF.URDFExport
                 List<Component2> components = node.Link.SWComponents;
                 node.Link.SWMainComponent = components[0];
             }
+            else
+            {
+                node.Link.SWMainComponent = null;
+            }
 
             if (parent != null && ComputeJointKinematics)
             {
@@ -354,7 +368,7 @@ namespace SW2URDF.URDFExport
                 }
             }
 
-            if (ComputeInertialValues)
+            if (ComputeInertialValues && node.Link.SWComponents.Count > 0)
             {
                 ComputeInertialProperties(node.Link);
             }
@@ -411,14 +425,33 @@ namespace SW2URDF.URDFExport
 
             child.Joint.Parent.Name = parent.Name;
             child.Joint.Child.Name = child.Name;
+
+            bool emptyChildLink = child.SWComponents == null || child.SWComponents.Count == 0;
+            bool needsAutoInference =
+                coordSysName == "Automatically Generate" ||
+                axisName == "Automatically Generate" ||
+                jointType == "Automatically Detect";
+
+            if (!child.isFixedFrame && emptyChildLink && needsAutoInference)
+            {
+                ExportErrorWhy =
+                    string.Format(
+                        "Joint {0} connects to empty link {1}. " +
+                        "Empty links cannot auto-detect joint geometry. " +
+                        "Specify coordinate system, axis, and joint type manually, " +
+                        "or make the incoming joint fixed.",
+                        child.Joint.Name,
+                        child.Name);
+                return false;
+            }
+
             if (child.isFixedFrame)
             {
                 axisName = "";
                 jointType = "fixed";
                 child.Joint.Type = jointType;
             }
-            else if (coordSysName == "Automatically Generate" ||
-                axisName == "Automatically Generate" || jointType == "Automatically Detect")
+            else if (needsAutoInference)
             {
                 // We have to estimate the joint if the user specifies automatic for either the
                 // reference coordinate system, the reference axis or the joint type.
