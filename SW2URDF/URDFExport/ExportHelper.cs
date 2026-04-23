@@ -60,6 +60,7 @@ namespace SW2URDF.URDFExport
         private int mSTLUnits;
         private int mSTLQuality;
         private double mHideTransitionSpeed;
+        private string mExportOutputCoordinateSystem;
 
         private UserProgressBar progressBar;
 
@@ -347,6 +348,14 @@ namespace SW2URDF.URDFExport
 
         private void Save3dxml(Link link, string windowsMeshFilename)
         {
+            double[] inertialOriginXYZ = link.Inertial.Origin.GetXYZ();
+            double[] inertialOriginRPY = link.Inertial.Origin.GetRPY();
+            double[] inertialMoment = link.Inertial.Inertia.GetMoment();
+            double[] visualOriginXYZ = link.Visual.Origin.GetXYZ();
+            double[] visualOriginRPY = link.Visual.Origin.GetRPY();
+            double[] collisionOriginXYZ = link.Collision.Origin.GetXYZ();
+            double[] collisionOriginRPY = link.Collision.Origin.GetRPY();
+
             int errors = 0;
             int warnings = 0;
 
@@ -400,30 +409,50 @@ namespace SW2URDF.URDFExport
                 }
             }
 
-            // Localize the link to the certain place.
-            if (linkModel != null)
+            try
             {
-                MathTransform coordSysTransform =
-                    linkModel.Extension.GetCoordinateSystemTransformByName(coordsysName);
-                if (coordSysTransform != null)
+                // Localize the link to the certain place.
+                if (linkModel != null)
                 {
-                    logger.Info("Localizing Link : " + coordsysName);
-                    Matrix<double> GlobalTransform = MathOps.GetTransformation(coordSysTransform);
-                    //LocalizeLink(link, GlobalTransform);
+                    MathTransform coordSysTransform =
+                        linkModel.Extension.GetCoordinateSystemTransformByName(coordsysName);
+                    if (coordSysTransform != null)
+                    {
+                        logger.Info("Localizing Link : " + coordsysName);
+                        Matrix<double> GlobalTransform = MathOps.GetTransformation(coordSysTransform);
+                        LocalizeLink(link, GlobalTransform);
+                    }
+                    else
+                    {
+                        logger.Warn("coordSysTransform was null : " + coordsysName);
+                    }
                 }
                 else
                 {
-                    logger.Warn("coordSysTransform was null : " + coordsysName);
+                    logger.Warn("Link model was null.");
                 }
-            }
-            else
-            { 
-                logger.Warn("Link model was null.");
-            }
-            // === 3dxml Localize Link === //
 
-            ActiveDoc.Extension.SaveAs(windowsMeshFilename,
-                (int)swSaveAsVersion_e.swSaveAsCurrentVersion, saveOptions, null, ref errors, ref warnings);
+                // === 3dxml Localize Link === //
+
+                ActiveDoc.Extension.SaveAs(windowsMeshFilename,
+                    (int)swSaveAsVersion_e.swSaveAsCurrentVersion, saveOptions, null, ref errors, ref warnings);
+            }
+            finally
+            {
+                // Keep 3DXML mesh localization from leaking into the URDF values written later.
+                link.Inertial.Origin.SetXYZ(inertialOriginXYZ);
+                link.Inertial.Origin.SetRPY(inertialOriginRPY);
+                link.Inertial.Inertia.Ixx = inertialMoment[0];
+                link.Inertial.Inertia.Ixy = inertialMoment[1];
+                link.Inertial.Inertia.Ixz = inertialMoment[2];
+                link.Inertial.Inertia.Iyy = inertialMoment[4];
+                link.Inertial.Inertia.Iyz = inertialMoment[5];
+                link.Inertial.Inertia.Izz = inertialMoment[8];
+                link.Visual.Origin.SetXYZ(visualOriginXYZ);
+                link.Visual.Origin.SetRPY(visualOriginRPY);
+                link.Collision.Origin.SetXYZ(collisionOriginXYZ);
+                link.Collision.Origin.SetRPY(collisionOriginRPY);
+            }
 
             if (errors + warnings != 0)
             {
@@ -458,7 +487,7 @@ namespace SW2URDF.URDFExport
                 (int)swSaveAsVersion_e.swSaveAsCurrentVersion, saveOptions, null, ref errors, ref warnings);
             if (errors + warnings != 0)
             {
-                logger.Warn("Exporting STL for link " + link.Name + " failed with error " + errors + 
+                logger.Warn("Exporting STL for link " + link.Name + " failed with error " + errors +
                     " or warnings " + warnings);
             }
             CommonSwOperations.HideComponents(ActiveSWModel, link.SWComponents);
@@ -582,6 +611,8 @@ namespace SW2URDF.URDFExport
             mSTLPreview = iSwApp.GetUserPreferenceToggle((int)swUserPreferenceToggle_e.swSTLPreview);
             mHideTransitionSpeed = iSwApp.GetUserPreferenceDoubleValue((int)swUserPreferenceDoubleValue_e.swViewTransitionHideShowComponent);
             mSaveComponentsIntoOneFile = iSwApp.GetUserPreferenceToggle((int)swUserPreferenceToggle_e.swSTLComponentsIntoOneFile);
+            mExportOutputCoordinateSystem =
+                iSwApp.GetUserPreferenceStringValue((int)swUserPreferenceStringValue_e.swExportOutputCoordinateSystem);
         }
 
         //This is how the STL export preferences need to be to properly export
@@ -610,6 +641,9 @@ namespace SW2URDF.URDFExport
             iSwApp.SetUserPreferenceToggle((int)swUserPreferenceToggle_e.swSTLPreview, mSTLPreview);
             iSwApp.SetUserPreferenceDoubleValue((int)swUserPreferenceDoubleValue_e.swViewTransitionHideShowComponent, mHideTransitionSpeed);
             iSwApp.SetUserPreferenceToggle((int)swUserPreferenceToggle_e.swSTLComponentsIntoOneFile, mSaveComponentsIntoOneFile);
+            iSwApp.SetUserPreferenceStringValue(
+                (int)swUserPreferenceStringValue_e.swExportOutputCoordinateSystem,
+                mExportOutputCoordinateSystem);
         }
 
         //If the user selected something specific for a particular link, that is handled here.
@@ -617,6 +651,9 @@ namespace SW2URDF.URDFExport
         {
             doc.Extension.SetUserPreferenceString((int)swUserPreferenceStringValue_e.swFileSaveAsCoordinateSystem,
                 (int)swUserPreferenceOption_e.swDetailingNoOptionSpecified, CoordinateSystemName);
+            iSwApp.SetUserPreferenceStringValue(
+                (int)swUserPreferenceStringValue_e.swExportOutputCoordinateSystem,
+                CoordinateSystemName);
             if (qualityFine)
             {
                 iSwApp.SetUserPreferenceIntegerValue((int)swUserPreferenceIntegerValue_e.swSTLQuality, (int)swSTLQuality_e.swSTLQuality_Fine);
