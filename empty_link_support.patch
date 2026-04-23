@@ -1,0 +1,234 @@
+diff --git a/SW2URDF/URDFExport/ExportHelperExtension.cs b/SW2URDF/URDFExport/ExportHelperExtension.cs
+--- a/SW2URDF/URDFExport/ExportHelperExtension.cs
++++ b/SW2URDF/URDFExport/ExportHelperExtension.cs
+@@ -2717,20 +2717,32 @@ namespace SW2URDF.URDFExport
+         private void ComputeInertialProperties(Link link)
+         {
++            if (link.SWComponents == null || link.SWComponents.Count == 0)
++            {
++                return;
++            }
++
+             // Get the SolidWorks MathTransform that corresponds to the child coordinate system
+             MathTransform jointTransform = GetCoordinateSystemTransform(link.Joint.CoordinateSystemName);
+             List<Body2> bodies = GetBodies(link.SWComponents);
++
++            if (bodies == null || bodies.Count == 0)
++            {
++                return;
++            }
++
+             double[] moment = GetComponentsMomentOfInertia(bodies, jointTransform);
+             link.Inertial.Inertia.SetMomentMatrix(moment);
+             link.Inertial.Mass.Value = GetCompomentsMass(bodies);
+             double[] centerOfMass = GetCompomentsCenterOfMass(bodies, jointTransform);
+             link.Inertial.Origin.SetXYZ(centerOfMass);
+             link.Inertial.Origin.SetRPY(new double[3] { 0, 0, 0 });
+         }
+
+         private static void ComputeVisualCollisionProperties(Link link)
+         {
+             link.Visual.Origin.SetXYZ(new double[3] { 0, 0, 0 });
+             link.Visual.Origin.SetRPY(new double[3] { 0, 0, 0 });
+
+             link.Collision.Origin.SetXYZ(new double[3] { 0, 0, 0 });
+             link.Collision.Origin.SetRPY(new double[3] { 0, 0, 0 });
+
+             if (link.SWComponents.Count == 0)
+             {
+                 return;
+             }
+@@ -2776,18 +2788,24 @@ namespace SW2URDF.URDFExport
+         private Link CreateLinkFromComponents(Link parent, LinkNode node)
+         {
+             if (node.Link.SWComponents.Count > 0)
+             {
+                 List<Component2> components = node.Link.SWComponents;
+                 node.Link.SWMainComponent = components[0];
+             }
++            else
++            {
++                node.Link.SWMainComponent = null;
++            }
+
+             if (parent != null && ComputeJointKinematics)
+             {
+                 logger.Info("Creating joint " + node.Link.Name);
+
+                 bool error = CreateJoint(parent, node.Link);
+
+                 if (error)
+                 {
+                     logger.Warn(
+                         string.Format("Creating joint from parent {0} to child {1} failed",
+                         parent.Name, node.Link.Name));
+                 }
+             }
+
+-            if (ComputeInertialValues)
++            if (ComputeInertialValues && node.Link.SWComponents.Count > 0)
+             {
+                 ComputeInertialProperties(node.Link);
+             }
+
+             if (ComputeVisualCollision)
+             {
+                 ComputeVisualCollisionProperties(node.Link);
+@@ -2891,18 +2909,37 @@ namespace SW2URDF.URDFExport
+         private bool CreateJoint(Link parent, Link child)
+         {
+             CheckRefGeometryExists(child);
+
+             string coordSysName = child.Joint.CoordinateSystemName;
+             string axisName = child.Joint.AxisName;
+             string jointType = child.Joint.Type;
+
+             child.Joint.Parent.Name = parent.Name;
+             child.Joint.Child.Name = child.Name;
+
++            bool emptyChildLink = child.SWComponents == null || child.SWComponents.Count == 0;
++            bool needsAutoInference =
++                coordSysName == "Automatically Generate" ||
++                axisName == "Automatically Generate" ||
++                jointType == "Automatically Detect";
++
++            if (!child.isFixedFrame && emptyChildLink && needsAutoInference)
++            {
++                ExportErrorWhy =
++                    string.Format(
++                        "Joint {0} connects to empty link {1}. " +
++                        "Empty links cannot auto-detect joint geometry. " +
++                        "Specify coordinate system, axis, and joint type manually, " +
++                        "or make the incoming joint fixed.",
++                        child.Joint.Name,
++                        child.Name);
++                return false;
++            }
++
+             if (child.isFixedFrame)
+             {
+                 axisName = "";
+                 jointType = "fixed";
+                 child.Joint.Type = jointType;
+             }
+-            else if (coordSysName == "Automatically Generate" ||
+-                axisName == "Automatically Generate" || jointType == "Automatically Detect")
++            else if (needsAutoInference)
+             {
+                 // We have to estimate the joint if the user specifies automatic for either the
+                 // reference coordinate system, the reference axis or the joint type.
+                 EstimateGlobalJointFromComponents(parent, child);
+
+diff --git a/SW2URDF/URDFExport/ExportHelper.cs b/SW2URDF/URDFExport/ExportHelper.cs
+--- a/SW2URDF/URDFExport/ExportHelper.cs
++++ b/SW2URDF/URDFExport/ExportHelper.cs
+@@ -1886,30 +1886,37 @@ namespace SW2URDF.URDFExport
+         private void ExportFiles(Link link, URDFPackage package, int count, bool exportSTL = true, MeshExportFormat meshFormat = MeshExportFormat.STL)
+         {
+             progressBar.UpdateProgress(count);
+             progressBar.UpdateTitle("Exporting mesh: " + link.Name);
+             logger.Info("Exporting link: " + link.Name);
+
+             // Iterate through each child and export its files
+             logger.Info("Link " + link.Name + " has " + link.Children.Count + " children");
+             foreach (Link child in link.Children)
+             {
+                 count += 1;
+-                if (!child.isFixedFrame)
+-                {
+-                    ExportFiles(child, package, count, exportSTL, meshFormat);
+-                }
++                ExportFiles(child, package, count, exportSTL, meshFormat);
+             }
+
++            bool hasMesh =
++                !link.isFixedFrame &&
++                link.SWComponents != null &&
++                link.SWComponents.Count > 0;
++
++            if (!hasMesh)
++            {
++                logger.Info("Skipping mesh export for empty/fixed-frame link: " + link.Name);
++                return;
++            }
++
+             // Copy the texture file (if it was specified) to the textures directory
+-            if (!link.isFixedFrame && !String.IsNullOrWhiteSpace(link.Visual.Material.Texture.wFilename))
++            if (!String.IsNullOrWhiteSpace(link.Visual.Material.Texture.wFilename))
+             {
+                 if (File.Exists(link.Visual.Material.Texture.wFilename))
+                 {
+                     link.Visual.Material.Texture.Filename =
+                         package.TexturesDirectory + Path.GetFileName(link.Visual.Material.Texture.wFilename);
+
+                     string textureSavePath =
+                         package.WindowsTexturesDirectory + Path.GetFileName(link.Visual.Material.Texture.wFilename);
+
+                     File.Copy(link.Visual.Material.Texture.wFilename, textureSavePath, true);
+                 }
+             }
+
+diff --git a/SW2URDF/URDFExport/ExportPropertyManagerExtension.cs b/SW2URDF/URDFExport/ExportPropertyManagerExtension.cs
+--- a/SW2URDF/URDFExport/ExportPropertyManagerExtension.cs
++++ b/SW2URDF/URDFExport/ExportPropertyManagerExtension.cs
+@@ -2022,34 +2022,43 @@ namespace SW2URDF.URDFExport
+         private void CheckNodeInertialComplete(LinkNode node)
+         {
+-            if (node.Nodes.Count > 0 && node.Link.SWComponents.Count == 0)
+-            {
+-                node.IsIncomplete = true;
+-                node.WhyIncomplete +=
+-                " Links with children cannot be empty. Select its associated components\r\n";
+-            }
++            // Allow component-less links.
++            // These are virtual/interface links and intentionally have no inertial.
+         }
+
+         private void CheckNodeVisualComplete(LinkNode node)
+         {
+-            if (node.Nodes.Count > 0 && node.Link.SWComponents.Count == 0)
+-            {
+-                node.IsIncomplete = true;
+-                node.WhyIncomplete +=
+-                " Links with children cannot be empty. Select its associated components\r\n";
+-            }
++            // Allow component-less links.
++            // These are virtual/interface links and intentionally have no visual/collision mesh.
+         }
+
+         private void CheckNodeJointComplete(LinkNode node)
+         {
+-            if (node.Link.SWComponents.Count == 0 && node.Link.Joint.CoordinateSystemName == "Automatically Generate")
++            bool emptyLink = node.Link.SWComponents.Count == 0;
++            bool autoCoord = node.Link.Joint.CoordinateSystemName == "Automatically Generate";
++            bool autoAxis = node.Link.Joint.AxisName == "Automatically Generate";
++            bool autoType =
++                node.Link.Joint.Type == "Automatically Detect" ||
++                node.Link.Joint.Type == "Automatically Generate";
++
++            if (emptyLink && autoCoord)
+             {
+                 node.IsIncomplete = true;
+                 node.WhyIncomplete +=
+                 " The origin reference coordinate system cannot be automatically generated\r\n" +
+                 " without components. Either select an origin or at least one component.\r\n";
+             }
+
+-            if (node.Link.SWComponents.Count == 0 && node.Link.Joint.AxisName == "Automatically Generate")
++            if (!node.Link.isFixedFrame && emptyLink && autoAxis)
+             {
+                 node.IsIncomplete = true;
+                 node.WhyIncomplete +=
+                 " The reference axis cannot be automatically generated\r\n" +
+                 " without components. Either select an axis or at least one component.";
+             }
+
+-            if (node.Link.SWComponents.Count == 0 && node.Link.Joint.Type == "Automatically Generate")
++            if (!node.Link.isFixedFrame && emptyLink && autoType)
+             {
+                 node.IsIncomplete = true;
+                 node.WhyIncomplete +=
+                 " The joint type cannot be automatically detected\r\n" +
+                 " without components. Either select an joint type or at least one component.";
+             }
+         }

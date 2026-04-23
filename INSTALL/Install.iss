@@ -3,7 +3,7 @@
 
 #define MyAppName "SolidWorks To URDF (Custom)"
 #define MyAppVersion "2026 v1.6.1.test"
-#define MyAppPublisher "Enactic (Initially published by Stephen Brawner)"
+#define MyAppPublisher "Persenal user stevenaya (Initially published by Stephen Brawner)"
 #define MyAppURL "http://wiki.ros.org/sw_urdf_exporter"
 
 #define MainBinaryName  "SW2URDF.dll"
@@ -31,8 +31,8 @@ AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
 CreateAppDir=yes
-OutputBaseFilename=sw2urdfSetup
-;OutputBaseFilename={#SetupBaseName + AppVersionFile}
+; OutputBaseFilename=sw2urdfSetup
+OutputBaseFilename={#SetupBaseName + AppVersionFile}
 Compression=lzma                                                        
 DefaultDirName="C:\Program Files\SolidWorks Corp\SolidWorks\URDFExporter"
 SolidCompression=no

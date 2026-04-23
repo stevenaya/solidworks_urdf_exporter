@@ -30,7 +30,9 @@ using SW2URDF.Utilities;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Windows;
 using System.Xml.Serialization;
 
@@ -60,6 +62,7 @@ namespace SW2URDF.URDFExport
         private int mSTLUnits;
         private int mSTLQuality;
         private double mHideTransitionSpeed;
+        private string mExportOutputCoordinateSystem;
 
         private UserProgressBar progressBar;
 
@@ -156,6 +159,10 @@ namespace SW2URDF.URDFExport
             package.CreateDirectories();
             URDFRobot.Name = PackageName;
             string windowsURDFFileName = package.WindowsRobotsDirectory + URDFRobot.Name + ".urdf";
+            bool convert3dxmlToDae = exportSTL && meshFormat == MeshExportFormat.DAE;
+            string windowsIntermediateURDFFileName = convert3dxmlToDae
+                ? package.WindowsRobotsDirectory + URDFRobot.Name + "_3dxml_intermediate.urdf"
+                : windowsURDFFileName;
             string windowsCSVFileName = package.WindowsRobotsDirectory + URDFRobot.Name + ".csv";
             string windowsPackageXMLFileName = package.WindowsPackageDirectory + "package.xml";
 
@@ -226,9 +233,16 @@ namespace SW2URDF.URDFExport
                 return;
             }
 
-            logger.Info("Writing URDF file to " + windowsURDFFileName);
-            URDFWriter uWriter = new URDFWriter(windowsURDFFileName);
+            logger.Info("Writing URDF file to " + windowsIntermediateURDFFileName);
+            URDFWriter uWriter = new URDFWriter(windowsIntermediateURDFFileName);
             URDFRobot.WriteURDF(uWriter.writer);
+
+            if (convert3dxmlToDae)
+            {
+                Convert3dxmlUrdfMeshesWithScikitRobot(
+                    windowsIntermediateURDFFileName,
+                    windowsURDFFileName);
+            }
 
             ImportExport.WriteRobotToCSV(URDFRobot, windowsCSVFileName);
 
@@ -274,14 +288,22 @@ namespace SW2URDF.URDFExport
             foreach (Link child in link.Children)
             {
                 count += 1;
-                if (!child.isFixedFrame)
-                {
-                    ExportFiles(child, package, count, exportSTL, meshFormat);
-                }
+                ExportFiles(child, package, count, exportSTL, meshFormat);
+            }
+
+            bool hasMesh =
+                !link.isFixedFrame &&
+                link.SWComponents != null &&
+                link.SWComponents.Count > 0;
+
+            if (!hasMesh)
+            {
+                logger.Info("Skipping mesh export for empty/fixed-frame link: " + link.Name);
+                return;
             }
 
             // Copy the texture file (if it was specified) to the textures directory
-            if (!link.isFixedFrame && !String.IsNullOrWhiteSpace(link.Visual.Material.Texture.wFilename))
+            if (!String.IsNullOrWhiteSpace(link.Visual.Material.Texture.wFilename))
             {
                 if (File.Exists(link.Visual.Material.Texture.wFilename))
                 {
@@ -306,6 +328,7 @@ namespace SW2URDF.URDFExport
                     break;
 
                 case MeshExportFormat.THREEDXML:
+                case MeshExportFormat.DAE:
                     meshFilename += ".3dxml";
                     windowsMeshFileName += ".3dxml";
                     break;
@@ -325,6 +348,7 @@ namespace SW2URDF.URDFExport
                         break;
 
                     case MeshExportFormat.THREEDXML:
+                    case MeshExportFormat.DAE:
                         Save3dxml(link, windowsMeshFileName);
                         break;
 
@@ -337,8 +361,98 @@ namespace SW2URDF.URDFExport
             link.Collision.Geometry.Mesh.Filename = meshFilename;
         }
 
+        private static void Convert3dxmlUrdfMeshesWithScikitRobot(
+            string windowsInputURDFFileName,
+            string windowsOutputURDFFileName)
+        {
+            logger.Info("Converting 3dxml meshes to DAE with scikit-robot");
+
+            ProcessStartInfo startInfo = new ProcessStartInfo
+            {
+                FileName = GetPythonExecutable(),
+                Arguments = "-m skrobot.apps.convert_urdf_mesh " +
+                    QuoteProcessArgument(windowsInputURDFFileName) +
+                    " --output " + QuoteProcessArgument(windowsOutputURDFFileName) +
+                    " --format dae --collision-mesh-format stl --force-zero-origin --overwrite-mesh",
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+                UseShellExecute = false
+            };
+
+            try
+            {
+                using (Process process = new Process())
+                {
+                    process.StartInfo = startInfo;
+                    StringBuilder output = new StringBuilder();
+                    StringBuilder error = new StringBuilder();
+
+                    process.OutputDataReceived += (sender, args) =>
+                    {
+                        if (args.Data != null)
+                        {
+                            output.AppendLine(args.Data);
+                        }
+                    };
+                    process.ErrorDataReceived += (sender, args) =>
+                    {
+                        if (args.Data != null)
+                        {
+                            error.AppendLine(args.Data);
+                        }
+                    };
+                    process.Start();
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
+                    process.WaitForExit();
+                    process.WaitForExit();
+
+                    if (output.Length > 0)
+                    {
+                        logger.Info("scikit-robot output: " + output);
+                    }
+                    if (error.Length > 0)
+                    {
+                        logger.Warn("scikit-robot error output: " + error);
+                    }
+
+                    if (process.ExitCode != 0)
+                    {
+                        throw new Exception("scikit-robot convert-urdf-mesh failed with exit code " +
+                            process.ExitCode + ". See export.log for details.");
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                logger.Error("Failed to convert 3dxml meshes with scikit-robot", e);
+                throw new Exception("Failed to convert 3dxml meshes with scikit-robot. " +
+                    "Install Python and scikit-robot, or choose STL/3dxml export. " +
+                    "See docs/SCIKIT_ROBOT_MESH_EXPORT.md and export.log for details.", e);
+            }
+        }
+
+        private static string GetPythonExecutable()
+        {
+            string configuredPython = System.Environment.GetEnvironmentVariable("SW2URDF_PYTHON");
+            if (!String.IsNullOrWhiteSpace(configuredPython))
+            {
+                return configuredPython;
+            }
+            return "python";
+        }
+
+        private static string QuoteProcessArgument(string value)
+        {
+            return "\"" + value.Replace("\"", "\\\"") + "\"";
+        }
+
         private void Save3dxml(Link link, string windowsMeshFilename)
         {
+            double[] inertialOriginXYZ = link.Inertial.Origin.GetXYZ();
+            double[] inertialOriginRPY = link.Inertial.Origin.GetRPY();
+            double[] inertialMoment = link.Inertial.Inertia.GetMoment();
             int errors = 0;
             int warnings = 0;
 
@@ -392,30 +506,48 @@ namespace SW2URDF.URDFExport
                 }
             }
 
-            // Localize the link to the certain place.
-            if (linkModel != null)
+            try
             {
-                MathTransform coordSysTransform =
-                    linkModel.Extension.GetCoordinateSystemTransformByName(coordsysName);
-                if (coordSysTransform != null)
+                // Localize the link to the certain place.
+                if (linkModel != null)
                 {
-                    logger.Info("Localizing Link : " + coordsysName);
-                    Matrix<double> GlobalTransform = MathOps.GetTransformation(coordSysTransform);
-                    //LocalizeLink(link, GlobalTransform);
+                    MathTransform coordSysTransform =
+                        linkModel.Extension.GetCoordinateSystemTransformByName(coordsysName);
+                    if (coordSysTransform != null)
+                    {
+                        logger.Info("Localizing Link : " + coordsysName);
+                        Matrix<double> GlobalTransform = MathOps.GetTransformation(coordSysTransform);
+                        LocalizeLink(link, GlobalTransform);
+                    }
+                    else
+                    {
+                        logger.Warn("coordSysTransform was null : " + coordsysName);
+                    }
                 }
                 else
                 {
-                    logger.Warn("coordSysTransform was null : " + coordsysName);
+                    logger.Warn("Link model was null.");
                 }
-            }
-            else
-            { 
-                logger.Warn("Link model was null.");
-            }
-            // === 3dxml Localize Link === //
 
-            ActiveDoc.Extension.SaveAs(windowsMeshFilename,
-                (int)swSaveAsVersion_e.swSaveAsCurrentVersion, saveOptions, null, ref errors, ref warnings);
+                // === 3dxml Localize Link === //
+
+                ActiveDoc.Extension.SaveAs(windowsMeshFilename,
+                    (int)swSaveAsVersion_e.swSaveAsCurrentVersion, saveOptions, null, ref errors, ref warnings);
+            }
+            finally
+            {
+                // 3DXML meshes are exported in assembly coordinates, so keep the localized
+                // visual/collision origins as compensation. Only inertial values are restored
+                // because they should stay in the link frame used by the URDF dynamics.
+                link.Inertial.Origin.SetXYZ(inertialOriginXYZ);
+                link.Inertial.Origin.SetRPY(inertialOriginRPY);
+                link.Inertial.Inertia.Ixx = inertialMoment[0];
+                link.Inertial.Inertia.Ixy = inertialMoment[1];
+                link.Inertial.Inertia.Ixz = inertialMoment[2];
+                link.Inertial.Inertia.Iyy = inertialMoment[4];
+                link.Inertial.Inertia.Iyz = inertialMoment[5];
+                link.Inertial.Inertia.Izz = inertialMoment[8];
+            }
 
             if (errors + warnings != 0)
             {
@@ -450,7 +582,7 @@ namespace SW2URDF.URDFExport
                 (int)swSaveAsVersion_e.swSaveAsCurrentVersion, saveOptions, null, ref errors, ref warnings);
             if (errors + warnings != 0)
             {
-                logger.Warn("Exporting STL for link " + link.Name + " failed with error " + errors + 
+                logger.Warn("Exporting STL for link " + link.Name + " failed with error " + errors +
                     " or warnings " + warnings);
             }
             CommonSwOperations.HideComponents(ActiveSWModel, link.SWComponents);
@@ -574,6 +706,8 @@ namespace SW2URDF.URDFExport
             mSTLPreview = iSwApp.GetUserPreferenceToggle((int)swUserPreferenceToggle_e.swSTLPreview);
             mHideTransitionSpeed = iSwApp.GetUserPreferenceDoubleValue((int)swUserPreferenceDoubleValue_e.swViewTransitionHideShowComponent);
             mSaveComponentsIntoOneFile = iSwApp.GetUserPreferenceToggle((int)swUserPreferenceToggle_e.swSTLComponentsIntoOneFile);
+            mExportOutputCoordinateSystem =
+                iSwApp.GetUserPreferenceStringValue((int)swUserPreferenceStringValue_e.swExportOutputCoordinateSystem);
         }
 
         //This is how the STL export preferences need to be to properly export
@@ -602,6 +736,9 @@ namespace SW2URDF.URDFExport
             iSwApp.SetUserPreferenceToggle((int)swUserPreferenceToggle_e.swSTLPreview, mSTLPreview);
             iSwApp.SetUserPreferenceDoubleValue((int)swUserPreferenceDoubleValue_e.swViewTransitionHideShowComponent, mHideTransitionSpeed);
             iSwApp.SetUserPreferenceToggle((int)swUserPreferenceToggle_e.swSTLComponentsIntoOneFile, mSaveComponentsIntoOneFile);
+            iSwApp.SetUserPreferenceStringValue(
+                (int)swUserPreferenceStringValue_e.swExportOutputCoordinateSystem,
+                mExportOutputCoordinateSystem);
         }
 
         //If the user selected something specific for a particular link, that is handled here.
@@ -609,6 +746,9 @@ namespace SW2URDF.URDFExport
         {
             doc.Extension.SetUserPreferenceString((int)swUserPreferenceStringValue_e.swFileSaveAsCoordinateSystem,
                 (int)swUserPreferenceOption_e.swDetailingNoOptionSpecified, CoordinateSystemName);
+            iSwApp.SetUserPreferenceStringValue(
+                (int)swUserPreferenceStringValue_e.swExportOutputCoordinateSystem,
+                CoordinateSystemName);
             if (qualityFine)
             {
                 iSwApp.SetUserPreferenceIntegerValue((int)swUserPreferenceIntegerValue_e.swSTLQuality, (int)swSTLQuality_e.swSTLQuality_Fine);
