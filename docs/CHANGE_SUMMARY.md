@@ -2,15 +2,12 @@
 
 This document summarizes the main features and bug fixes added on top of the upstream SolidWorks URDF exporter.
 
-Note `MyAppName` `MyAppVersion` `MyAppPublisher` in Install.iss was slightly changed to address this is not a officially released version. 
-
 ## New Features
 
 - Added `DAE via scikit-robot` as a new assembly mesh export format.
 - Added an automatic post-processing pipeline that exports intermediate `3dxml` meshes and converts them to `dae`/`stl` with `skrobot.apps.convert_urdf_mesh`. A user-facing setup and troubleshooting documentation for the Python/scikit-robot export pipeline in [SCIKIT_ROBOT_MESH_EXPORT.md](./SCIKIT_ROBOT_MESH_EXPORT.md).
 - Added support for the `SW2URDF_PYTHON` environment variable so the exporter can use a specific Python interpreter.
 - Added better support for empty links used as helper frames in robot structures.
-- Added a [installer](../INSTALL/OUTPUT/sw2urdfSetup_1_6_9609_37988.exe) created by [Inno Setup](https://jrsoftware.org/isinfo.php) for easier deployment of the upgraded exporter.
 
 ## Bug Fixes
 
@@ -28,7 +25,7 @@ Note `MyAppName` `MyAppVersion` `MyAppPublisher` in Install.iss was slightly cha
 
 ### Installation
 
-- Install the exporter using the provided installer package.
+- Install the exporter using the visual studio. You can create a installer by [Inno Setup](https://jrsoftware.org/isinfo.php) for easier deployment of the upgraded exporter.
 - If you plan to use `DAE via scikit-robot`, install a supported Python environment and configure `SW2URDF_PYTHON` if needed.
 - Restart SolidWorks after installation or after changing Python-related environment variables.
 
