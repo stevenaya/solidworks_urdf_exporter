@@ -16,6 +16,10 @@ https://github.com/ros/solidworks_urdf_exporter/releases/tag/1.6.0
 
 https://github.com/ros/solidworks_urdf_exporter/releases/tag/1.5.1
 
+## Changes in this Customized version
+
+See [here](./docs/CHANGE_SUMMARY.md).
+
 ## SolidWorks Version Requirements
 
 1. The minimum required version of SolidWorks for use with this add-in is 2018 Service Pack 5. SolidWorks 2017 or earlier may work. See [this issue](https://github.com/ros/solidworks_urdf_exporter/issues/73).

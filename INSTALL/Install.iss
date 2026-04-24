@@ -2,8 +2,8 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "SolidWorks To URDF (Custom)"
-#define MyAppVersion "2026 v1.6.1.test"
-#define MyAppPublisher "Persenal user stevenaya (Initially published by Stephen Brawner)"
+#define MyAppVersion "2026 v1.6.1.Custom"
+#define MyAppPublisher "Personal user (Initially published by Stephen Brawner)"
 #define MyAppURL "http://wiki.ros.org/sw_urdf_exporter"
 
 #define MainBinaryName  "SW2URDF.dll"
